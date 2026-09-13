@@ -25,8 +25,8 @@ public class User {
     @Column(nullable = false, unique = true)
     private String email;
 
-    @Column(name = "password_hash", nullable = false)
-    private String passwordHash;
+    @Column(name = "google_sub", nullable = false, unique = true)
+    private String googleSub;
 
     @Column(name = "display_name")
     private String displayName;

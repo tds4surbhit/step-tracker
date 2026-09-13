@@ -1,14 +1,13 @@
 package org.example.steptracker.auth;
 
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
 import lombok.RequiredArgsConstructor;
 import org.example.steptracker.auth.dto.*;
-import org.example.steptracker.common.ConflictException;
 import org.example.steptracker.common.TokenHasher;
 import org.example.steptracker.common.UnauthorizedException;
 import org.example.steptracker.goal.GoalService;
 import org.example.steptracker.user.User;
 import org.example.steptracker.user.UserRepository;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,31 +20,26 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
-    private final PasswordEncoder passwordEncoder;
+    private final GoogleTokenVerifier googleTokenVerifier;
     private final JwtService jwtService;
     private final JwtProperties jwtProperties;
     private final GoalService goalService;
 
     @Transactional
-    public AuthResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmailIgnoreCase(request.email())) {
-            throw new ConflictException("An account with this email already exists");
-        }
-        User user = new User();
-        user.setEmail(request.email());
-        user.setPasswordHash(passwordEncoder.encode(request.password()));
-        user.setDisplayName(request.displayName());
-        user = userRepository.save(user);
-        goalService.createDefaultGoal(user.getId());
-        return issueTokens(user.getId());
-    }
+    public AuthResponse loginWithGoogle(GoogleAuthRequest request) {
+        GoogleIdToken.Payload payload = googleTokenVerifier.verify(request.idToken());
+        String googleSub = payload.getSubject();
 
-    public AuthResponse login(LoginRequest request) {
-        User user = userRepository.findByEmailIgnoreCase(request.email())
-                .orElseThrow(() -> new UnauthorizedException("Invalid email or password"));
-        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            throw new UnauthorizedException("Invalid email or password");
-        }
+        User user = userRepository.findByGoogleSub(googleSub).orElseGet(() -> {
+            User created = new User();
+            created.setGoogleSub(googleSub);
+            created.setEmail(payload.getEmail());
+            created.setDisplayName((String) payload.get("name"));
+            created = userRepository.save(created);
+            goalService.createDefaultGoal(created.getId());
+            return created;
+        });
+
         return issueTokens(user.getId());
     }
 

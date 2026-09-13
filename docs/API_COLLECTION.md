@@ -15,37 +15,34 @@ than guessing.
 - All requests/responses: `application/json`, UTF-8.
 - Dates: `YYYY-MM-DD` (calendar date, no time component). Timestamps: ISO-8601 with offset,
   e.g. `2026-09-12T14:30:00+05:30`.
-- Auth: `Authorization: Bearer <access_token>` on every endpoint except `/auth/register`,
-  `/auth/login`, `/auth/refre
-- sh`.
+- Auth: `Authorization: Bearer <access_token>` on every endpoint except `/auth/google` and
+  `/auth/refresh`.
 - Errors follow a consistent shape (see [Error Format](#error-format)).
 
 ## Auth
 
-### `POST /auth/register`
+Sign-in is Google-only: the client performs Google Sign-In natively (Android/iOS SDK), then
+hands the resulting **Google ID token** to the backend, which verifies it and issues our own
+JWT access/refresh token pair. See [`TECH_GUIDE.md`](TECH_GUIDE.md) for the full flow and why
+the JWT is separate from the Google token.
+
+### `POST /auth/google`
 
 Request:
 ```json
-{
-  "email": "user@example.com",
-  "password": "min-8-chars",
-  "displayName": "Jane Doe"
-}
+{ "idToken": "google-id-token" }
 ```
-Response `201`:
+Response `200`:
 ```json
 {
   "userId": "uuid",
   "accessToken": "jwt",
-  "refreshToken": "jwt",
+  "refreshToken": "opaque-token",
   "expiresIn": 900
 }
 ```
-
-### `POST /auth/login`
-
-Request: `{ "email": "...", "password": "..." }`
-Response `200`: same shape as register.
+First call for a given Google account creates the `User` (email/displayName come from the
+Google token); subsequent calls log the same account in.
 
 ### `POST /auth/refresh`
 
@@ -175,8 +172,8 @@ All non-2xx responses:
   }
 }
 ```
-Common `code` values: `VALIDATION_ERROR` (400), `UNAUTHORIZED` (401), `NOT_FOUND` (404),
-`CONFLICT` (409, e.g. duplicate email on register), `RATE_LIMITED` (429).
+Common `code` values: `VALIDATION_ERROR` (400), `UNAUTHORIZED` (401, e.g. invalid/expired
+Google ID token or refresh token), `NOT_FOUND` (404), `RATE_LIMITED` (429).
 
 ## Open Items Affecting This Contract
 

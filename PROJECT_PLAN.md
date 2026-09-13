@@ -11,14 +11,16 @@ push aggregated step data to the backend.
 
 ## Implementation Status (as of 2026-09-12)
 
-Phases 0–3 are code-complete against the contract in `docs/API.md`:
+Phases 0–3 are code-complete against the contract in `docs/API_COLLECTION.md`:
 
 - ✅ Phase 0 — Spring Boot foundation (Maven/Spring Boot 3.3.4, package structure, Docker +
   docker-compose for local Postgres, springdoc-openapi wired at `/docs`).
 - ✅ Flyway baseline migration (`users`, `devices`, `daily_step_summary`, `step_goal`,
   `refresh_token`).
-- ✅ Phase 1 — Auth (register/login/refresh/logout with JWT access tokens + opaque, hashed
-  refresh tokens) and Profile (`GET`/`PUT /users/me`).
+- ✅ Phase 1 — Auth (Google Sign-In only: client verifies with Google, backend exchanges the
+  Google ID token for our own JWT access token + opaque, hashed refresh token; refresh/logout
+  unchanged) and Profile (`GET`/`PUT /users/me`). See [`docs/TECH_GUIDE.md`](docs/TECH_GUIDE.md)
+  for the full auth flow.
 - ✅ Phase 2 — Device registration (`POST /devices`) and `POST /steps/sync` upsert-per-day.
 - ✅ Phase 3 — `GET /steps/today|daily|range` and `GET`/`PUT /users/me/goal`.
 - ⏳ **Not yet done:** a real `mvn compile`/boot-up verification against a running Postgres, and
@@ -76,9 +78,10 @@ This needs to be validated with you before Phase 2 — see open questions in §8
 ## 4. API Surface (MVP)
 
 All endpoints under `/api/v1`. Full request/response contracts are in
-[`docs/API.md`](docs/API.md), which is the doc meant for the frontend/mobile teams.
+[`docs/API_COLLECTION.md`](docs/API_COLLECTION.md), which is the doc meant for the
+frontend/mobile teams.
 
-- **Auth:** `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`
+- **Auth:** `POST /auth/google` (Google Sign-In), `POST /auth/refresh`, `POST /auth/logout`
 - **Profile:** `GET /users/me`, `PUT /users/me`
 - **Devices:** `POST /devices` (register a device + its health source)
 - **Steps:** `POST /steps/sync` (batch upsert daily summaries), `GET /steps/today`,
@@ -98,7 +101,8 @@ All endpoints under `/api/v1`. Full request/response contracts are in
 
 1. **Phase 0 — Foundation:** Add Spring Boot to the existing Maven project, project structure,
    Flyway baseline, Docker image, CI pipeline (build + test), Postgres provisioning.
-2. **Phase 1 — Auth & Profile:** Registration/login, JWT issuance/refresh, `users/me` CRUD.
+2. **Phase 1 — Auth & Profile:** Google Sign-In verification, JWT issuance/refresh, `users/me`
+   CRUD.
 3. **Phase 2 — Step Ingestion:** Device registration, `/steps/sync` batch upsert, de-dup rules
    from §3 implemented and tested.
 4. **Phase 3 — Reporting & Goals:** Daily/range queries, goal CRUD, response shapes finalized
@@ -113,8 +117,8 @@ All endpoints under `/api/v1`. Full request/response contracts are in
 - Friends, groups, leaderboards, challenges.
 - Push notifications.
 - Achievements/badges, streak logic.
-- Social login (Google/Apple Sign-In) — email/password only for MVP; flagged as a likely fast
-  follow since both mobile platforms make it easy to add.
+- Sign in with Apple — required before iOS store submission (see §8) but not yet built; Google
+  Sign-In is the only auth method implemented so far.
 
 ## 8. Open Questions (need your input before Phase 2)
 
@@ -125,9 +129,10 @@ All endpoints under `/api/v1`. Full request/response contracts are in
   (e.g., always take the max of available sources for a given day).
 - **Team size / timeline:** not yet specified — the phase breakdown above has no dates attached
   yet; let me know if you want target dates per phase.
-- **Social login:** confirm whether Sign in with Apple / Google is needed for MVP or can wait
-  (Apple requires Sign in with Apple if you offer any other third-party login, so this affects
-  scope if social login is added later).
+- **Social login:** **resolved** — Google Sign-In is now the only auth method for MVP (no
+  email/password). Per Apple's rules, offering any third-party login (Google) means **Sign in
+  with Apple is mandatory** for the iOS app before store submission — not yet implemented,
+  tracked as a follow-up.
 
 ## 9. Repo Layout (proposed)
 
@@ -138,11 +143,13 @@ StepTracker/
 ├── docker-compose.yml       <- local Postgres + app for dev
 ├── PROJECT_PLAN.md          <- this file
 ├── docs/
-│   └── API.md               <- frontend-facing API contract
+│   ├── API_COLLECTION.md    <- frontend-facing API contract
+│   ├── TECH_GUIDE.md        <- internal tech spec (architecture, auth flow, conventions)
+│   └── INFRASTRUCTURE.md    <- hosting/deployment architecture
 └── src/
     └── main/
         ├── java/org/example/steptracker/
-        │   ├── auth/        <- register/login/refresh/logout, JWT
+        │   ├── auth/        <- Google Sign-In verification, refresh/logout, JWT issuance
         │   ├── user/        <- profile GET/PUT
         │   ├── device/      <- device registration
         │   ├── steps/       <- sync + daily/today/range queries
