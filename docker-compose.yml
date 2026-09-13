@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: steptracker
+      POSTGRES_USER: steptracker
+      POSTGRES_PASSWORD: steptracker
+    ports:
+      - "5432:5432"
+    volumes:
+      - steptracker-data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    depends_on:
+      - postgres
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/steptracker
+      DB_USERNAME: steptracker
+      DB_PASSWORD: steptracker
+      JWT_SECRET: local-dev-secret-change-me-please-change-me
+    ports:
+      - "8080:8080"
+
+volumes:
+  steptracker-data:
