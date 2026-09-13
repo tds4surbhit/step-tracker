@@ -235,11 +235,14 @@ Every one of these is real and useful at some scale. None at eleven users.
 - [ ] R2 bucket + API token
 
 ### Before store submission
-- [ ] **Sign in with Apple** — mandatory if you offer Google login. Hard rejection otherwise.
+- [ ] **Sign in with Apple** — mandatory because the app offers Google Sign-In. Hard rejection
+  from Apple review otherwise. See [`TECH_GUIDE.md`](TECH_GUIDE.md) for how it slots into the
+  existing auth flow (same "verify with provider → issue our own JWT" shape as Google).
 - [ ] **In-app account deletion** — required by both stores. Google additionally wants a publicly reachable web URL to request deletion without installing the app.
 - [ ] Privacy policy + terms as static pages (Cloudflare Pages, free)
-- [ ] Transactional email for password reset/verification — Resend free tier covers 3,000/month. Avoid SES; the sandbox exit is a multi-day detour.
 - [ ] Push notifications — Expo Push covers APNs + FCM behind one API. Needs an APNs key and an FCM project.
+- [ ] Google Cloud OAuth consent screen + Android/iOS OAuth client IDs (needed for Google Sign-In
+  to work outside internal testing — see `TECH_GUIDE.md`).
 
 ### The moment real users exist
 - [ ] **Sentry** on both backend and mobile. Without it, a crash on someone's phone in another city is completely invisible to you. This is the least optional item on the page.

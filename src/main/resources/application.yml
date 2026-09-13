@@ -35,6 +35,8 @@ app:
     secret: ${JWT_SECRET:change-this-to-a-long-random-secret-in-every-real-environment}
     access-token-ttl-seconds: 900
     refresh-token-ttl-seconds: 2592000
+  google:
+    client-ids: ${GOOGLE_CLIENT_IDS:}
 
 springdoc:
   swagger-ui:
