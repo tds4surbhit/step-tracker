@@ -8,16 +8,18 @@ spring:
     hikari:
       maximum-pool-size: ${DB_POOL_MAX:3}
       minimum-idle: ${DB_POOL_MIN_IDLE:0}
-  jpa:
-    hibernate:
-      ddl-auto: validate
-    open-in-view: false
-    properties:
-      hibernate:
-        format_sql: true
+  jooq:
+    sql-dialect: postgres
   flyway:
     enabled: true
     locations: classpath:db/migration
+    # Deliberately separate from spring.datasource above: that one should point at a pooled
+    # connection string (PgBouncer), Flyway needs a DIRECT one — DDL-locking migrations don't
+    # play well with transaction-mode pooling. Falls back to the main datasource vars so plain
+    # local Postgres (no pooler) still works with nothing extra set.
+    url: ${FLYWAY_DB_URL:${DB_URL:jdbc:postgresql://localhost:5432/steptracker}}
+    user: ${FLYWAY_DB_USERNAME:${DB_USERNAME:steptracker}}
+    password: ${FLYWAY_DB_PASSWORD:${DB_PASSWORD:steptracker}}
 
 server:
   port: ${PORT:8080}
