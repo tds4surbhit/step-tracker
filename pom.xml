@@ -14,13 +14,27 @@
     <groupId>org.example</groupId>
     <artifactId>StepTracker</artifactId>
     <version>1.0-SNAPSHOT</version>
-    <name>StepTracker</name>
+    <name>atStepTracker</name>
     <description>Backend for the Step Tracker mobile app</description>
 
     <properties>
         <java.version>17</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <jjwt.version>0.12.6</jjwt.version>
+
+        <!--
+          jOOQ codegen + standalone Flyway connection. Both need a DIRECT (non-pooled) Neon
+          connection — PgBouncer transaction-mode pooling doesn't play well with catalog
+          introspection or Flyway's DDL-locking migrations. Defaults point at nothing real on
+          purpose — neither runs as part of a normal build (see docs/TECH_GUIDE.md "jOOQ code
+          generation"). Override on the command line to point at your Neon `dev` branch's DIRECT
+          connection string (no "-pooler" in the hostname):
+            mvn flyway:migrate -Ddb.direct.url=... -Ddb.direct.user=... -Ddb.direct.password=...
+            mvn jooq-codegen:generate -Ddb.direct.url=... -Ddb.direct.user=... -Ddb.direct.password=...
+        -->
+        <db.direct.url>jdbc:postgresql://localhost:5432/steptracker</db.direct.url>
+        <db.direct.user>steptracker</db.direct.user>
+        <db.direct.password>steptracker</db.direct.password>
     </properties>
 
     <dependencies>
@@ -30,7 +44,7 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
+            <artifactId>spring-boot-starter-jooq</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -146,6 +160,77 @@
                         </exclude>
                     </excludes>
                 </configuration>
+            </plugin>
+
+            <!--
+              Standalone Flyway, so migrations can be applied without booting the whole Spring
+              app — same reason as jOOQ codegen below: point it at the Neon `dev` branch's
+              DIRECT connection string (never bound to a build phase; run by hand):
+                mvn flyway:migrate -Ddb.direct.url=<dev-branch-direct-jdbc-url> \
+                    -Ddb.direct.user=<user> -Ddb.direct.password=<password>
+            -->
+            <plugin>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-maven-plugin</artifactId>
+                <version>${flyway.version}</version>
+                <configuration>
+                    <url>${db.direct.url}</url>
+                    <user>${db.direct.user}</user>
+                    <password>${db.direct.password}</password>
+                    <locations>
+                        <location>classpath:db/migration</location>
+                    </locations>
+                </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.flywaydb</groupId>
+                        <artifactId>flyway-database-postgresql</artifactId>
+                        <version>${flyway.version}</version>
+                    </dependency>
+                </dependencies>
+            </plugin>
+
+            <!--
+              jOOQ codegen. Deliberately NOT bound to any lifecycle phase, so `mvn compile` /
+              `mvn package` / the Dockerfile build never try to reach a database. Run by hand,
+              only when the schema changes, against the Neon `dev` branch's DIRECT connection
+              (apply migrations first, via flyway:migrate above):
+                mvn jooq-codegen:generate -Ddb.direct.url=<dev-branch-direct-jdbc-url> \
+                    -Ddb.direct.user=<user> -Ddb.direct.password=<password>
+              Generated sources land in src/main/java and are committed to git.
+            -->
+            <plugin>
+                <groupId>org.jooq</groupId>
+                <artifactId>jooq-codegen-maven</artifactId>
+                <configuration>
+                    <jdbc>
+                        <driver>org.postgresql.Driver</driver>
+                        <url>${db.direct.url}</url>
+                        <user>${db.direct.user}</user>
+                        <password>${db.direct.password}</password>
+                    </jdbc>
+                    <generator>
+                        <database>
+                            <name>org.jooq.meta.postgres.PostgresDatabase</name>
+                            <inputSchema>public</inputSchema>
+                            <excludes>flyway_schema_history</excludes>
+                        </database>
+                        <generate>
+                            <pojos>true</pojos>
+                        </generate>
+                        <target>
+                            <packageName>org.example.steptracker.jooq</packageName>
+                            <directory>src/main/java</directory>
+                        </target>
+                    </generator>
+                </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.postgresql</groupId>
+                        <artifactId>postgresql</artifactId>
+                        <version>${postgresql.version}</version>
+                    </dependency>
+                </dependencies>
             </plugin>
         </plugins>
     </build>

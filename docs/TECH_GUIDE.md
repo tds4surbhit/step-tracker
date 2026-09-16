@@ -9,11 +9,19 @@ has hosting/deployment. This doc is the glue between them — architecture and f
 > Keep this file up to date when architecture-level decisions change (auth, data model,
 > package structure). Don't duplicate what's already in the other three docs.
 
+> **Current scope: auth only.** The device/steps/goal/profile features that existed earlier in
+> this project's history were removed deliberately — they were built before their tables had
+> been properly thought through. The plan now is to design and add each table/feature back one
+> at a time, starting from a real decision on its schema, using the Neon `dev` branch + jOOQ
+> codegen loop described in §5. Don't reintroduce those features by copying old patterns without
+> re-deciding the schema first.
+
 ## 1. Stack
 
-Java 17, Spring Boot 3.3.4, Maven, PostgreSQL (Neon, serverless), Flyway migrations, JWT
-(`jjwt`), springdoc-openapi. Package-by-feature under `org.example.steptracker`: `auth`,
-`user`, `device`, `steps`, `goal`, `config`, `common`.
+Java 17, Spring Boot 3.3.4, Maven, PostgreSQL (Neon, serverless), Flyway migrations, **jOOQ**
+for data access, JWT (`jjwt`), springdoc-openapi. Package-by-feature under
+`org.example.steptracker`: `auth`, `user` (just `UserRepository` — the account lookup auth
+needs, no profile API yet), `config`, `common`.
 
 ## 2. Auth flow — Google Sign-In + our own JWT
 
@@ -30,7 +38,7 @@ Mobile app                         Our backend                      Google
     |                                        |    (GoogleIdTokenVerifier,
     |                                        |     Google's public JWKs) --->|
     |                                        |<---------------- valid/claims |
-    |                                        |--- find or create User
+    |                                        |--- find or create account
     |                                        |    by google_sub
     |                                        |--- mint our own JWT
     |                                        |    (JwtService, HMAC, our secret)
@@ -63,53 +71,134 @@ and revocation (logout) works even though JWTs themselves aren't revocable — t
 token is what we actually revoke, and access tokens are short-lived enough that revocation lag
 is acceptable.
 
-**User identity:** `users.google_sub` (Google's stable subject id) is the unique key, not email
-(Google accounts can change email; `sub` doesn't change). `email`/`display_name` are populated
-from the Google token's claims at first login and are editable afterward via `PUT /users/me` —
-they are profile data, not auth data.
+**Account identity:** `accounts.google_sub` (Google's stable subject id) is the unique key, not
+email (Google accounts can change email; `sub` doesn't change). `email`/`name` are populated
+from the Google token's claims at first login; there's no profile-edit API yet (see the scope
+note above).
 
 **Key files:**
 - `auth/GoogleTokenVerifier.java` — verifies the Google ID token (audience = our OAuth client
   IDs, configured via `app.google.client-ids` / `GOOGLE_CLIENT_IDS` env var, comma-separated
   Android + iOS client IDs).
-- `auth/AuthService.java` — `loginWithGoogle()` (find-or-create user + issue tokens),
+- `auth/AuthService.java` — `loginWithGoogle()` (find-or-create account + issue tokens),
   `refresh()`, `logout()`.
 - `auth/JwtService.java` — mint/verify our own JWT (HMAC, `app.jwt.secret`).
 - `auth/JwtAuthenticationFilter.java` — runs before every request, populates
   `SecurityContextHolder` from a valid Bearer token; unauthenticated requests to protected
   routes are rejected downstream by Spring Security (`RestAuthEntryPoint`).
 - `config/SecurityConfig.java` — `/auth/**`, `/docs/**`, `/api-docs/**`, `/actuator/health` are
-  public; everything else requires a valid access token.
+  public; everything else requires a valid access token (nothing else exists yet).
 
 **Known follow-up:** Apple requires **Sign in with Apple** if any other third-party login
 (Google) is offered — mandatory before iOS store submission, not yet implemented. It would slot
 in the same way: a new `AppleTokenVerifier`, a new `POST /auth/apple`, same `issueTokens()` /
-`User` find-or-create pattern, one more unique column (`apple_sub`) or a generic
-`(provider, provider_sub)` pair on `users` if a second provider is added — worth revisiting the
-single-`google_sub`-column design at that point rather than bolting on a second nullable column.
+account find-or-create pattern, one more unique column (`apple_sub`) or a generic
+`(provider, provider_sub)` pair on `accounts` if a second provider is added — worth revisiting
+the single-`google_sub`-column design at that point rather than bolting on a second nullable
+column.
 
-## 3. Core domain model
+## 3. Core domain model (current)
 
-- **User** — `id`, `email`, `google_sub` (unique, not null), `display_name`, `date_of_birth`,
-  `height_cm`, `weight_kg`, `gender`, `created_at`, `updated_at`. No password field.
-- **Device** — one row per physical device a user has registered, tags which health source it
-  syncs from (`healthkit` / `health_connect` / `sensor` / `manual`).
-- **DailyStepSummary** — one row per `(user_id, date)`, upserted by the client's sync call. The
-  backend does not sum multiple sources for the same day — the client decides the authoritative
-  count per day before syncing (see §3 of `PROJECT_PLAN.md` for the de-dup rationale).
-- **StepGoal** — one row per user, `daily_goal_steps`.
-- **RefreshToken** — `user_id`, `token_hash` (SHA-256 of the opaque token, not the token
-  itself), `expires_at`, `revoked`.
+- **Account** (table `accounts`) — `id`, `email`, `google_sub` (unique, not null), `name`,
+  `date_of_birth`, `height_cm`, `weight_kg`, `created_at`, `updated_at`. No password field, no
+  `gender`, no stored `age` (always derive it from `date_of_birth` at read time if/when needed —
+  storing both goes stale). Deliberately bare-minimum; extend via a new migration once a real
+  feature needs more, not speculatively.
+- **RefreshToken** (table `refresh_token`) — `id`, `user_id` (FK → `accounts.id`), `token_hash`
+  (SHA-256 of the opaque token, not the token itself), `expires_at`, `revoked`, `created_at`.
 
-Migrations: `V1__init.sql` (baseline schema, originally with `password_hash`),
-`V2__google_auth.sql` (drops `password_hash`, adds `google_sub`).
+Migration: `V1__init.sql` — creates both tables. (This squashes what were previously three
+separate migrations — `password_hash` → `google_sub` → rename-to-`accounts` — into one clean
+baseline, since nothing had been deployed yet and carrying that history forward added nothing.)
 
-## 4. Conventions worth knowing
+**Not designed yet:** devices, step data, goals, or any profile-edit API. When one of these is
+actually needed, design its table deliberately (what columns, what constraints, why) before
+writing any code against it — that's the whole point of the `dev`-branch + jOOQ workflow in §5.
 
-- Package-by-feature, not by layer — each feature package (`auth`, `steps`, ...) has its own
-  controller/service/repository/entity/dto.
-- DTOs are Java records under a feature's `dto/` subpackage; entities are Lombok
-  `@Getter @Setter` classes (not records — JPA needs mutability + a no-args constructor).
+## 4. Data access — jOOQ, not JPA/Hibernate
+
+**Decision:** no ORM, no entity dirty-checking. Every query is explicit SQL built through jOOQ's
+typed DSL against generated table/column constants, and the objects services work with are
+jOOQ-generated POJOs, not hand-written `@Entity` classes.
+
+**Generated code:** `org.example.steptracker.jooq.*` (`Tables.ACCOUNTS`/`REFRESH_TOKEN` for typed
+column refs, `tables.pojos.*` for the plain data-holder classes services use — note table names
+are plural where the table itself is plural, e.g. `Accounts`, not `Account`). **These files are
+committed to git**, not gitignored — see "Regenerating" below for why.
+
+**Repository pattern:** each feature keeps a `@Repository` class (`UserRepository`,
+`RefreshTokenRepository`) wrapping a `DSLContext`, with explicit `insert(...)`/`update(...)`
+methods — there's no Hibernate save-and-it-figures-out-insert-vs-update. Repositories are also
+where id/timestamp bookkeeping lives: generating `UUID.randomUUID()` for id columns (the schema
+has no DB-side UUID default), and setting `updated_at` to `now()` explicitly on updates (Postgres
+`DEFAULT now()` only fires on insert, not on an `UPDATE`).
+
+**Timestamps are `java.time.OffsetDateTime`**, not `Instant` — that's jOOQ's default Java
+mapping for Postgres `timestamptz`, and using it directly avoids writing a converter that adds
+nothing. `date`/`numeric`/`integer`/`boolean` columns map to `LocalDate`/`BigDecimal`/
+`Integer`/`Boolean` as you'd expect, no config needed. Nothing in the current schema needs a
+`forcedType`/custom `org.jooq.Converter` — that pattern will come back if a future table has an
+enum-like `VARCHAR` + `CHECK` column (it did, for the removed `devices`/`daily_step_summary`
+tables — same approach applies whenever that's redesigned).
+
+**Regenerating (only when the schema changes):** neither Flyway (standalone) nor jOOQ codegen
+runs as part of a normal build — `mvn compile`/`mvn package`/the `Dockerfile` build never touch
+a database. Both are invoked by hand, pointed at the Neon **`dev` branch's direct connection**
+(see §5 for *why direct, not pooled*):
+
+```bash
+# 1. Apply migrations to the dev branch
+mvn flyway:migrate \
+    -Ddb.direct.url=<dev-branch-DIRECT-jdbc-url> \
+    -Ddb.direct.user=<user> \
+    -Ddb.direct.password=<password>
+
+# 2. Generate jOOQ classes from the now-migrated schema
+mvn jooq-codegen:generate \
+    -Ddb.direct.url=<dev-branch-DIRECT-jdbc-url> \
+    -Ddb.direct.user=<user> \
+    -Ddb.direct.password=<password>
+```
+
+Then review the diff under `src/main/java/org/example/steptracker/jooq/` and commit it like any
+other code change. Verify what Flyway created first, in the Neon SQL Editor or DBeaver:
+```sql
+SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';
+```
+Expect `accounts`, `refresh_token`, `flyway_schema_history` — nothing else, and don't create
+tables by clicking them into existence in a console; if Flyway didn't create it, the next person
+to run migrations gets a schema `V1__init.sql` doesn't describe.
+
+If either command times out or hangs on the first try, just retry — Neon suspends compute after
+~5 minutes idle, so the very first connection after a break pays a cold-start of a few seconds.
+
+## 5. Neon branches — and why direct vs. pooled matters
+
+`main` is the real deployed database (see `INFRASTRUCTURE.md`). A separate `dev` branch exists
+purely so Flyway/jOOQ codegen (and any manual local testing) has a live Postgres to point at
+without needing Docker — Neon branches are copy-on-write and billed from the same project-wide
+storage/CU-hour pool as `main`, so an occasionally-used `dev` branch costs close to nothing on
+the free tier (see cost breakdown discussed when this was set up). `dev` is never touched by
+deploys; only `main` is.
+
+Neon gives you two connection strings per branch — a **pooled** one (hostname has `-pooler` in
+it, goes through PgBouncer in transaction mode) and a **direct** one (no `-pooler`, straight to
+the compute). They are not interchangeable:
+
+- **App runtime datasource** (`DB_URL` in `application.yml`) → **pooled**. This is what
+  `INFRASTRUCTURE.md` §5 already recommends (Cloud Run can spin up many instances; the pooler is
+  what keeps that from exhausting Neon's connection limit).
+- **Flyway migrations** and **jOOQ codegen** → **direct**. Migrations take DDL locks and run in
+  long-lived transactions; PgBouncer's transaction-mode pooling actively breaks that. Codegen is
+  reading catalog metadata, which is also happier off a direct connection. Both are configured
+  via the `db.direct.*` Maven properties (`pom.xml`) / `FLYWAY_DB_URL` env var
+  (`application.yml`) — kept deliberately separate from the app's own `DB_URL`.
+
+## 6. Conventions worth knowing
+
+- Package-by-feature, not by layer — each feature package has its own controller/service/
+  repository/dto, plus the shared generated POJOs from `jooq.tables.pojos`.
+- DTOs are Java records under a feature's `dto/` subpackage.
 - Errors: `common/*Exception.java` (`NotFoundException`, `UnauthorizedException`,
   `ConflictException`, `BadRequestException`) + `GlobalExceptionHandler` map to the error shape
   documented in `API_COLLECTION.md`.
@@ -118,5 +207,6 @@ Migrations: `V1__init.sql` (baseline schema, originally with `password_hash`),
   re-parsing the token themselves.
 - Stateless everywhere — no server-side session, Cloud Run runs N instances (see
   `INFRASTRUCTURE.md` §5).
-- Flyway is the only way the schema changes — no `ddl-auto: update`, ever
-  (`spring.jpa.hibernate.ddl-auto: validate` in `application.yml`).
+- Flyway is the only way the schema changes — no auto-DDL, ever. `@Transactional` on services
+  still works unchanged under jOOQ: `spring-boot-starter-jooq` auto-configures a
+  `DataSourceTransactionManager` since there's no JPA `EntityManagerFactory` on the classpath.
