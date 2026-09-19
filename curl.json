@@ -1,0 +1,37 @@
+{
+  "_notes": "Manual curl reference for testing this API locally. Base URL assumes the app is running with default settings (mvn spring-boot:run) on port 8080 with context-path /api/v1. Replace <PLACEHOLDER> values before running. Add a new entry here every time a new endpoint is built.",
+  "_verified": "auth_google_login and auth_refresh confirmed working end-to-end 2026-09-19 against a real Google account and the Neon dev branch (see PROJECT_PLAN.md Implementation Status).",
+  "baseUrl": "http://localhost:8080/api/v1",
+  "requests": [
+    {
+      "name": "health",
+      "description": "Actuator health check — should always be public, no auth needed.",
+      "curl": "curl -s http://localhost:8080/api/v1/actuator/health"
+    },
+    {
+      "name": "auth_google_login",
+      "description": "Google Sign-In. First call for a Google account creates a row in `accounts`. Requires a real Google ID token (aud must match GOOGLE_CLIENT_IDS the app was started with).",
+      "curl": "curl -s -X POST http://localhost:8080/api/v1/auth/google -H \"Content-Type: application/json\" -d '{\"idToken\":\"<GOOGLE_ID_TOKEN>\"}'"
+    },
+    {
+      "name": "auth_google_login_bogus",
+      "description": "Sanity check with a garbage token — expect 401 UNAUTHORIZED, not a crash.",
+      "curl": "curl -s -w '\\nHTTP_STATUS:%{http_code}\\n' -X POST http://localhost:8080/api/v1/auth/google -H \"Content-Type: application/json\" -d '{\"idToken\":\"not-a-real-token\"}'"
+    },
+    {
+      "name": "auth_refresh",
+      "description": "Exchange a refresh token (from auth_google_login's response) for a new access token.",
+      "curl": "curl -s -X POST http://localhost:8080/api/v1/auth/refresh -H \"Content-Type: application/json\" -d '{\"refreshToken\":\"<REFRESH_TOKEN>\"}'"
+    },
+    {
+      "name": "auth_logout",
+      "description": "Revoke a refresh token. Expect 204 No Content on success.",
+      "curl": "curl -s -w '\\nHTTP_STATUS:%{http_code}\\n' -X POST http://localhost:8080/api/v1/auth/logout -H \"Content-Type: application/json\" -d '{\"refreshToken\":\"<REFRESH_TOKEN>\"}'"
+    },
+    {
+      "name": "protected_path_unauthenticated",
+      "description": "Any endpoint outside the public allowlist (/auth/**, /docs/**, /api-docs/**, /actuator/health), called with no Bearer token — expect 401.",
+      "curl": "curl -s -w '\\nHTTP_STATUS:%{http_code}\\n' http://localhost:8080/api/v1/actuator/info"
+    }
+  ]
+}

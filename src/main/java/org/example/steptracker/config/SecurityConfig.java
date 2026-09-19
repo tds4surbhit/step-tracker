@@ -1,7 +1,7 @@
 package org.example.steptracker.config;
 
 import lombok.RequiredArgsConstructor;
-import org.example.steptracker.auth.JwtAuthenticationFilter;
+import org.example.steptracker.security.JwtAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
