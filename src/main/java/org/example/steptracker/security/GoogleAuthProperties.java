@@ -1,4 +1,4 @@
-package org.example.steptracker.auth;
+package org.example.steptracker.security;
 
 import lombok.Getter;
 import lombok.Setter;

@@ -1,4 +1,4 @@
-package org.example.steptracker.auth.dto;
+package org.example.steptracker.dto;
 
 import java.util.UUID;
 

@@ -1,4 +1,4 @@
-package org.example.steptracker.auth;
+package org.example.steptracker.security;
 
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;

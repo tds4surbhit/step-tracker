@@ -1,4 +1,4 @@
-package org.example.steptracker.user;
+package org.example.steptracker.dao;
 
 import lombok.RequiredArgsConstructor;
 import org.example.steptracker.jooq.tables.pojos.Accounts;
@@ -13,7 +13,7 @@ import static org.example.steptracker.jooq.Tables.ACCOUNTS;
 
 @Repository
 @RequiredArgsConstructor
-public class UserRepository {
+public class AccountDao {
 
     private final DSLContext dsl;
 

@@ -1,4 +1,4 @@
-package org.example.steptracker.auth;
+package org.example.steptracker.dao;
 
 import lombok.RequiredArgsConstructor;
 import org.example.steptracker.jooq.tables.pojos.RefreshToken;
@@ -14,7 +14,7 @@ import static org.example.steptracker.jooq.Tables.REFRESH_TOKEN;
 
 @Repository
 @RequiredArgsConstructor
-public class RefreshTokenRepository {
+public class RefreshTokenDao {
 
     private final DSLContext dsl;
 

@@ -1,4 +1,4 @@
-package org.example.steptracker.auth;
+package org.example.steptracker.security;
 
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;

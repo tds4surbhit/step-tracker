@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Google ID token bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root {
+    --ink: #16202b;
+    --ink-soft: #5b6b7c;
+    --paper: #eef1f4;
+    --panel: #ffffff;
+    --rule: #ccd4dc;
+    --live: #1b7f4b;
+    --dead: #a32c2c;
+    --focus: #2b5cb8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  main { max-width: 46rem; margin: 0 auto; padding: 3rem 1.25rem 5rem; }
+  h1 { font-size: 1.5rem; font-weight: 600; margin: 0 0 .25rem; letter-spacing: -.01em; }
+  .lede { color: var(--ink-soft); margin: 0 0 2.5rem; max-width: 34rem; }
+  section { border-top: 1px solid var(--rule); padding-top: 1.5rem; margin-top: 2rem; }
+  section:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
+  h2 { font-size: .95rem; font-weight: 600; margin: 0 0 .75rem; }
+  label { display: block; font-size: .85rem; color: var(--ink-soft); margin-bottom: .3rem; }
+  input[type=text] {
+    width: 100%; padding: .55rem .65rem; border: 1px solid var(--rule); border-radius: 3px;
+    background: var(--panel); color: var(--ink);
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .85rem;
+  }
+  input[type=text]:focus-visible, button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .field { margin-bottom: 1rem; }
+  button {
+    font: inherit; font-size: .85rem; font-weight: 500;
+    padding: .45rem .8rem; border: 1px solid var(--ink); border-radius: 3px;
+    background: var(--ink); color: var(--paper); cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--ink); border-color: var(--rule); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  #signin { margin-top: 1rem; min-height: 44px; }
+  .hidden { display: none; }
+  pre {
+    margin: 0; padding: .8rem; background: var(--panel); border: 1px solid var(--rule); border-radius: 3px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .78rem; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-all; max-height: 11rem; overflow: auto;
+  }
+  .row { display: flex; gap: .5rem; align-items: center; margin-top: .6rem; flex-wrap: wrap; }
+  dl { display: grid; grid-template-columns: 7rem 1fr; gap: .35rem .9rem; margin: 0 0 1rem; }
+  dt { color: var(--ink-soft); font-size: .85rem; }
+  dd { margin: 0; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .82rem; word-break: break-all; }
+  .clock { font-weight: 500; }
+  .clock.live { color: var(--live); }
+  .clock.dead { color: var(--dead); }
+  .warn { color: var(--dead); font-size: .85rem; margin: .5rem 0 0; }
+  .note { color: var(--ink-soft); font-size: .85rem; }
+  ul.notes { padding-left: 1.1rem; margin: 0; }
+  ul.notes li { margin-bottom: .5rem; }
+  code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .85em; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink:#dde4ea; --ink-soft:#8b9aa8; --paper:#151b21; --panel:#1d252d; --rule:#333f4a; --live:#5fcf94; --dead:#f08a8a; --focus:#7aa7ff; }
+    button { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Google ID token bench</h1>
+  <p class="lede">Sign in with your own Google account and this page hands you the raw ID token, plus the curl command to post it at your backend. Serve it from the same origin you registered in the Cloud Console.</p>
+
+  <section>
+    <h2>Client</h2>
+    <div class="field">
+      <label for="clientId">OAuth client ID (Web application)</label>
+      <input type="text" id="clientId" placeholder="123456-abc.apps.googleusercontent.com" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="endpoint">Backend endpoint</label>
+      <input type="text" id="endpoint" value="http://localhost:8080/api/v1/auth/google" autocomplete="off" spellcheck="false">
+    </div>
+    <button id="load">Load sign-in button</button>
+    <div id="signin"></div>
+    <p id="loadErr" class="warn hidden"></p>
+  </section>
+
+  <section id="result" class="hidden">
+    <h2>ID token</h2>
+    <pre id="token"></pre>
+    <div class="row">
+      <button id="copyToken" class="ghost">Copy token</button>
+      <span id="copiedToken" class="note hidden">Copied</span>
+    </div>
+
+    <dl>
+      <dt>aud</dt><dd id="aud"></dd>
+      <dt>email</dt><dd id="email"></dd>
+      <dt>sub</dt><dd id="sub"></dd>
+      <dt>iss</dt><dd id="iss"></dd>
+      <dt>expires</dt><dd><span id="clock" class="clock"></span></dd>
+    </dl>
+    <p id="audWarn" class="warn hidden">The aud claim doesn't match the client ID above. Your backend will reject this token unless that value is in GOOGLE_CLIENT_IDS.</p>
+
+    <h2>Send it</h2>
+    <pre id="curl"></pre>
+    <div class="row">
+      <button id="copyCurl" class="ghost">Copy curl command</button>
+      <span id="copiedCurl" class="note hidden">Copied</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>If the button doesn't appear</h2>
+    <ul class="notes">
+      <li>Open the page over HTTP, not by double-clicking the file. Google blocks <code>file://</code> origins.</li>
+      <li>The URL in your address bar must match an authorized JavaScript origin exactly, port included — <code>http://localhost:5500</code> and <code>http://127.0.0.1:5500</code> are different origins to Google.</li>
+      <li>New origins can take a few minutes to propagate after you save them.</li>
+      <li>Tokens last about an hour. When the clock turns red, sign in again for a fresh one.</li>
+    </ul>
+  </section>
+</main>
+
+<script>
+(function () {
+  var tokenEl = document.getElementById('token');
+  var clockEl = document.getElementById('clock');
+  var timer = null;
+
+  function decodeJwt(t) {
+    var part = t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    part += '='.repeat((4 - part.length % 4) % 4);
+    var json = atob(part).split('').map(function (c) {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join('');
+    return JSON.parse(decodeURIComponent(json));
+  }
+
+  function tick(exp) {
+    var left = exp - Math.floor(Date.now() / 1000);
+    if (left > 0) {
+      var m = Math.floor(left / 60), s = left % 60;
+      clockEl.textContent = 'valid for ' + m + 'm ' + (s < 10 ? '0' : '') + s + 's';
+      clockEl.className = 'clock live';
+    } else {
+      clockEl.textContent = 'expired — sign in again';
+      clockEl.className = 'clock dead';
+      clearInterval(timer);
+    }
+  }
+
+  function shellQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+
+  function onCredential(response) {
+    var token = response.credential;
+    var claims = decodeJwt(token);
+    var endpoint = document.getElementById('endpoint').value.trim();
+
+    tokenEl.textContent = token;
+    document.getElementById('aud').textContent = claims.aud || '';
+    document.getElementById('email').textContent = claims.email || '(not in token)';
+    document.getElementById('sub').textContent = claims.sub || '';
+    document.getElementById('iss').textContent = claims.iss || '';
+
+    var entered = document.getElementById('clientId').value.trim();
+    document.getElementById('audWarn').classList.toggle('hidden', claims.aud === entered);
+
+    document.getElementById('curl').textContent =
+      'curl -X POST ' + shellQuote(endpoint) + ' \\\n' +
+      "  -H 'Content-Type: application/json' \\\n" +
+      '  -d ' + shellQuote(JSON.stringify({ idToken: token }));
+
+    document.getElementById('result').classList.remove('hidden');
+    clearInterval(timer);
+    tick(claims.exp);
+    timer = setInterval(function () { tick(claims.exp); }, 1000);
+  }
+
+  function copier(btnId, srcId, flagId) {
+    document.getElementById(btnId).addEventListener('click', function () {
+      navigator.clipboard.writeText(document.getElementById(srcId).textContent).then(function () {
+        var flag = document.getElementById(flagId);
+        flag.classList.remove('hidden');
+        setTimeout(function () { flag.classList.add('hidden'); }, 1500);
+      });
+    });
+  }
+  copier('copyToken', 'token', 'copiedToken');
+  copier('copyCurl', 'curl', 'copiedCurl');
+
+  document.getElementById('load').addEventListener('click', function () {
+    var err = document.getElementById('loadErr');
+    var cid = document.getElementById('clientId').value.trim();
+    err.classList.add('hidden');
+
+    if (!cid) {
+      err.textContent = 'Paste your OAuth client ID first.';
+      err.classList.remove('hidden');
+      return;
+    }
+    if (typeof google === 'undefined' || !google.accounts) {
+      err.textContent = "Google's script hasn't loaded. Check your network, then reload the page.";
+      err.classList.remove('hidden');
+      return;
+    }
+    google.accounts.id.initialize({ client_id: cid, callback: onCredential, auto_select: false });
+    var host = document.getElementById('signin');
+    host.innerHTML = '';
+    google.accounts.id.renderButton(host, { theme: 'outline', size: 'large', text: 'signin_with' });
+  });
+})();
+</script>
+</body>
+</html>

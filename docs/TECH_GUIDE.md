@@ -19,9 +19,9 @@ has hosting/deployment. This doc is the glue between them — architecture and f
 ## 1. Stack
 
 Java 17, Spring Boot 3.3.4, Maven, PostgreSQL (Neon, serverless), Flyway migrations, **jOOQ**
-for data access, JWT (`jjwt`), springdoc-openapi. Package-by-feature under
-`org.example.steptracker`: `auth`, `user` (just `UserRepository` — the account lookup auth
-needs, no profile API yet), `config`, `common`.
+for data access, JWT (`jjwt`), springdoc-openapi. **Package-by-layer** (not by feature — see §7)
+under `org.example.steptracker`: `controller`, `operation`, `dao`, `dto`, `security`, `config`,
+`common`.
 
 ## 2. Auth flow — Google Sign-In + our own JWT
 
@@ -77,13 +77,17 @@ from the Google token's claims at first login; there's no profile-edit API yet (
 note above).
 
 **Key files:**
-- `auth/GoogleTokenVerifier.java` — verifies the Google ID token (audience = our OAuth client
+- `controller/AuthController.java` — HTTP layer only: binds `/auth/google|refresh|logout` to
+  `AuthOperation`, no logic of its own.
+- `operation/AuthOperation.java` — the business logic: `loginWithGoogle()` (find-or-create
+  account + issue tokens), `refresh()`, `logout()`.
+- `dao/AccountDao.java` / `dao/RefreshTokenDao.java` — the only classes that touch `DSLContext`
+  for these tables.
+- `security/GoogleTokenVerifier.java` — verifies the Google ID token (audience = our OAuth client
   IDs, configured via `app.google.client-ids` / `GOOGLE_CLIENT_IDS` env var, comma-separated
   Android + iOS client IDs).
-- `auth/AuthService.java` — `loginWithGoogle()` (find-or-create account + issue tokens),
-  `refresh()`, `logout()`.
-- `auth/JwtService.java` — mint/verify our own JWT (HMAC, `app.jwt.secret`).
-- `auth/JwtAuthenticationFilter.java` — runs before every request, populates
+- `security/JwtService.java` — mint/verify our own JWT (HMAC, `app.jwt.secret`).
+- `security/JwtAuthenticationFilter.java` — runs before every request, populates
   `SecurityContextHolder` from a valid Bearer token; unauthenticated requests to protected
   routes are rejected downstream by Spring Security (`RestAuthEntryPoint`).
 - `config/SecurityConfig.java` — `/auth/**`, `/docs/**`, `/api-docs/**`, `/actuator/health` are
@@ -126,12 +130,14 @@ column refs, `tables.pojos.*` for the plain data-holder classes services use —
 are plural where the table itself is plural, e.g. `Accounts`, not `Account`). **These files are
 committed to git**, not gitignored — see "Regenerating" below for why.
 
-**Repository pattern:** each feature keeps a `@Repository` class (`UserRepository`,
-`RefreshTokenRepository`) wrapping a `DSLContext`, with explicit `insert(...)`/`update(...)`
-methods — there's no Hibernate save-and-it-figures-out-insert-vs-update. Repositories are also
-where id/timestamp bookkeeping lives: generating `UUID.randomUUID()` for id columns (the schema
-has no DB-side UUID default), and setting `updated_at` to `now()` explicitly on updates (Postgres
-`DEFAULT now()` only fires on insert, not on an `UPDATE`).
+**DAO pattern:** each table gets a `@Repository`-annotated DAO class in the `dao` package
+(`AccountDao`, `RefreshTokenDao`) wrapping a `DSLContext`, with explicit `insert(...)`/
+`update(...)` methods — there's no Hibernate save-and-it-figures-out-insert-vs-update. DAOs are
+also where id/timestamp bookkeeping lives: generating `UUID.randomUUID()` for id columns (the
+schema has no DB-side UUID default), and setting `updated_at` to `now()` explicitly on updates
+(Postgres `DEFAULT now()` only fires on insert, not on an `UPDATE`). DAOs contain jOOQ queries
+only — no business logic, no validation, no orchestration; that all lives one layer up, in
+`operation` (see §7).
 
 **Timestamps are `java.time.OffsetDateTime`**, not `Instant` — that's jOOQ's default Java
 mapping for Postgres `timestamptz`, and using it directly avoids writing a converter that adds
@@ -179,7 +185,8 @@ purely so Flyway/jOOQ codegen (and any manual local testing) has a live Postgres
 without needing Docker — Neon branches are copy-on-write and billed from the same project-wide
 storage/CU-hour pool as `main`, so an occasionally-used `dev` branch costs close to nothing on
 the free tier (see cost breakdown discussed when this was set up). `dev` is never touched by
-deploys; only `main` is.
+deploys; only `main` is. **Confirmed working end-to-end** (2026-09-17): `flyway:migrate` applied
+`V1__init.sql`, `jooq-codegen:generate` produced `Accounts`/`RefreshToken`, `mvn compile` passes.
 
 Neon gives you two connection strings per branch — a **pooled** one (hostname has `-pooler` in
 it, goes through PgBouncer in transaction mode) and a **direct** one (no `-pooler`, straight to
@@ -194,11 +201,56 @@ the compute). They are not interchangeable:
   via the `db.direct.*` Maven properties (`pom.xml`) / `FLYWAY_DB_URL` env var
   (`application.yml`) — kept deliberately separate from the app's own `DB_URL`.
 
-## 6. Conventions worth knowing
+## 6. Local environment gotchas (things that look like bugs but aren't)
 
-- Package-by-feature, not by layer — each feature package has its own controller/service/
-  repository/dto, plus the shared generated POJOs from `jooq.tables.pojos`.
-- DTOs are Java records under a feature's `dto/` subpackage.
+- **Build with JDK 17, not whatever `java`/`mvn` resolves to by default.** `pom.xml` pins
+  `<java.version>17</java.version>`, but a machine's default JDK can be something newer that
+  Lombok's pinned version (from the Spring Boot 3.3.4 BOM) doesn't yet support hooking into. When
+  that happens, Lombok's annotation processor silently produces nothing — no error about Lombok
+  itself, just a wall of `cannot find symbol: getX()/setX()` compile errors on every
+  `@Getter`/`@Setter`/`@RequiredArgsConstructor` class, which reads exactly like a real code bug.
+  If you hit that: check `mvn -version`'s reported Java version first, before debugging the code.
+  Fix: point `JAVA_HOME` at a JDK 17 install (`/usr/libexec/java_home -V` lists what's installed
+  on macOS). On this dev machine, `~/.zshrc` sets `JAVA_HOME` to a JDK 17 (Corretto) permanently.
+- **`mvn clean` before running `flyway:migrate`/`jooq-codegen:generate` standalone**, if you've
+  changed which `.sql` files exist under `db/migration` since the last build. Invoking a single
+  plugin goal directly (`mvn flyway:migrate`) does **not** run the `process-resources` phase
+  first, so `target/classes/db/migration` can still hold migration files you deleted or renamed
+  in `src/main/resources`. Flyway reads the classpath, not `src/` directly, so a stale
+  `target/classes` means it applies migrations that no longer exist in source — this is exactly
+  how an old `V2__google_auth.sql` briefly got applied to the Neon `dev` branch during setup, and
+  why that branch needed a `DROP SCHEMA public CASCADE` reset. `mvn clean process-resources`
+  first avoids it.
+
+## 7. Conventions worth knowing
+
+**Package-by-layer (changed 2026-09-18 — was package-by-feature before).** Three layers, one
+flat package per layer, spanning every feature:
+
+- `controller/` — every `@RestController`. HTTP binding only: request/response mapping,
+  `@Valid`, status codes. No business logic — a controller method should read as "call one
+  operation method, return its result."
+- `operation/` — every `@Service` that holds business logic: orchestration, validation beyond
+  Bean Validation, deciding what to call in what order, transaction boundaries (`@Transactional`
+  lives here, not on DAOs). Named `<Feature>Operation`, e.g. `AuthOperation`.
+- `dao/` — every class that talks to `DSLContext`. Named `<Table>Dao`, e.g. `AccountDao`
+  (table `accounts`), `RefreshTokenDao` (table `refresh_token`). Jooq queries only, as described
+  in §4 — no logic beyond mapping a query's shape to Java.
+- `dto/` — flat, shared across all controllers. Java records.
+- `security/` — JWT + Google-token-verification infrastructure (`JwtService`,
+  `JwtAuthenticationFilter`, `GoogleTokenVerifier`, their `@ConfigurationProperties` classes).
+  Deliberately **not** folded into `operation`: this code doesn't implement a business decision,
+  it's infrastructure the security filter chain and every operation depend on — putting it in
+  `operation` would make "business logic" a dumping ground for anything auth-adjacent.
+- `config/`, `common/` — unchanged: Spring config beans, and cross-cutting utilities
+  (exceptions, `CurrentUser`, `TokenHasher`) used from any layer.
+
+**Naming rule for adding a new feature:** one controller method → one operation method → one or
+more DAO calls. If a controller method needs logic beyond "unwrap request, call operation,
+return response," that logic belongs in the operation class, not the controller. If an operation
+method needs a query DAO doesn't have yet, add the method to the DAO — never reach for
+`DSLContext` directly from `operation` or `controller`.
+
 - Errors: `common/*Exception.java` (`NotFoundException`, `UnauthorizedException`,
   `ConflictException`, `BadRequestException`) + `GlobalExceptionHandler` map to the error shape
   documented in `API_COLLECTION.md`.
